@@ -1,8 +1,15 @@
-import React, { createContext, useContext, useState, ReactNode } from 'react';
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+  ReactNode,
+} from "react";
+import api from "@/lib/api";
 
-export type UserRole = 'admin' | 'broker' | null;
+export type UserRole = "admin" | "broker";
 
-interface User {
+export interface User {
   id: string;
   name: string;
   email: string;
@@ -11,57 +18,93 @@ interface User {
 
 interface AuthContextType {
   user: User | null;
-  login: (email: string, password: string, role: UserRole) => Promise<boolean>;
+  token: string | null;
+  login: (email: string, password: string) => Promise<void>;
   logout: () => void;
   isAuthenticated: boolean;
+  loading: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-// Mock users for demo
-const mockUsers = [
-  { id: '1', name: 'Admin User', email: 'admin@tradercheck.com', password: 'admin123', role: 'admin' as UserRole },
-  { id: '2', name: 'Broker One', email: 'broker@tradercheck.com', password: 'broker123', role: 'broker' as UserRole },
-];
-
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
+  const [token, setToken] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  const login = async (email: string, password: string, role: UserRole): Promise<boolean> => {
-    // Simulate API call
-    await new Promise(resolve => setTimeout(resolve, 500));
-    
-    const foundUser = mockUsers.find(
-      u => u.email === email && u.password === password && u.role === role
-    );
-    
-    if (foundUser) {
-      setUser({
-        id: foundUser.id,
-        name: foundUser.name,
-        email: foundUser.email,
-        role: foundUser.role,
-      });
-      return true;
+  // Restore session from sessionStorage
+  useEffect(() => {
+    const storedToken = sessionStorage.getItem("auth_token");
+    const storedUser = sessionStorage.getItem("auth_user");
+
+    if (storedToken && storedUser) {
+      setToken(storedToken);
+      setUser(JSON.parse(storedUser));
     }
-    return false;
+
+    setLoading(false);
+  }, []);
+
+  const login = async (email: string, password: string): Promise<void> => {
+    try {
+      const res = await api.login(email, password);
+
+      console.log("LOGIN API RESPONSE ===>", res);
+
+      const jwt =
+        res?.token ||
+        res?.accessToken ||
+        res?.auth_token ||
+        res?.data?.token ||
+        res?.data?.accessToken;
+
+      const userData =
+        res?.user ||
+        res?.userData ||
+        res?.data?.user ||
+        res?.data ||
+        res?.profile;
+
+      if (!jwt || !userData) {
+        throw new Error("Login failed: invalid response from server");
+      }
+
+      sessionStorage.setItem("auth_token", jwt);
+      sessionStorage.setItem("auth_user", JSON.stringify(userData));
+
+      setToken(jwt);
+      setUser(userData);
+    } catch (err) {
+      console.error("Login failed", err);
+      throw err;
+    }
   };
 
   const logout = () => {
+    sessionStorage.removeItem("auth_token");
+    sessionStorage.removeItem("auth_user");
     setUser(null);
+    setToken(null);
   };
 
   return (
-    <AuthContext.Provider value={{ user, login, logout, isAuthenticated: !!user }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        token,
+        login,
+        logout,
+        isAuthenticated: !!user,
+        loading,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );
 }
 
 export function useAuth() {
-  const context = useContext(AuthContext);
-  if (context === undefined) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
-  return context;
+  const ctx = useContext(AuthContext);
+  if (!ctx) throw new Error("useAuth must be used within an AuthProvider");
+  return ctx;
 }
